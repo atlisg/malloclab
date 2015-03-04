@@ -1,13 +1,47 @@
-/*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
- * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
+/* 
+ * mm.c -  Explicit free lists, LIFO policy, and boundary tag coalescing. 
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ * Each block has header and footer of the form:
+ * 
+ *      31                     3  2  1  0 
+ *      -----------------------------------
+ *     | s  s  s  s  ... s  s  s  0  0  a/f
+ *      ----------------------------------- 
+ * 
+ * where s are the meaningful size bits and a/f is set 
+ * iff the block is allocated. 
+ *
+ * Each free block also has a nextlink and a prevlink and looks like this:
+ *
+ *      -------------------------------------------------------
+ *     |  header  | nextlink | prevlink | padding   |  footer  |
+ *      -------------------------------------------------------
+ *
+ * Padding can be of varying size depending on the block size itself.
+ *
+ * The list has the following form:
+ *
+ * begin                                                          end
+ * heap                                                           heap  
+ *  ---------------------------------------------------------------------------------------
+ * |  pad   | hdr(8:a) | nextlink | ftr(8:a) | zero or more usr blks | hdr(8:a) | prevlink |
+ *  ---------------------------------------------------------------------------------------
+ *          |            prologue            |                       |      epilogue       |
+ *          |              block             |                       |        block        |
+ *
+ * The allocated prologue and epilogue blocks are overhead that
+ * eliminate edge conditions during coalescing.
+ * 
+ * We plan to implement this like so:
+ *
+ * Free: when we are asked to free a block we first check if the blocks next to it are free as well. 
+ * If they are not, we simply free the block and put it at the front of our list.
+ * If it has a free adjecent block, we first coalesce the two (or three) blocks and put the resulting block to the front of our list.
+ * We also have to think about updating the links of the blocks that were previously pointing to the blocks being changed.
+ *
+ * Allocate: We find the first free block of matching size with linear search.
+ * If there is no match, we find the first free block of matching size++ and so on.
+ * If we have time, we will try to implement segregation list to make this a faster process.
  *
  */
 #include <stdio.h>
@@ -15,7 +49,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
-
+#include <assert.h>
 #include "mm.h"
 #include "memlib.h"
 
@@ -55,14 +89,23 @@ team_t team = {
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
+#define PUT(p, val)  (*(size_t *)(p) = (val))
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+
+static char *heapBegin;
 
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
+    assert((heapBegin = mem_sbrk(4 * (ALIGNMENT / 2))) != NULL);
+    // Búa til padding
+    // Búa til umgjörð á hýpinn
+    // látum heapBegin benda framhjá padding
+    // búum til pláss fyrir blokkir
+    
     return 0;
 }
 
@@ -87,6 +130,7 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    //jess ég er frír!!!   
 }
 
 /*
