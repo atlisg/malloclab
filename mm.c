@@ -11,7 +11,7 @@
  * where s are the meaningful size bits and a/f is set 
  * iff the block is allocated. 
  *
- * Each free block also has a nextlink and a prevlink and looks like this:
+ * Each free block also has a nextlink and a prevlink and looks like this (next- and prevlink are 32-bit addressess pointing to the next and previous (respectively) free blocks in the free list):
  *
  *      -------------------------------------------------------
  *     |  header  | nextlink | prevlink | padding   |  footer  |
