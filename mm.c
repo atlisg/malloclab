@@ -34,7 +34,9 @@
  * 
  * We plan to implement this like so:
  *
- * Free: when we are asked to free a block we first check if the blocks next to it are free as well. 
+ * Initialize: Make padding, prologue and epilogue block, as well as making space for the allocating of blocks on the imaginary heap.
+ *
+ * Free: When we are asked to free a block we first check if the blocks next to it are free as well. 
  * If they are not, we simply free the block and put it at the front of our list.
  * If it has a free adjecent block, we first coalesce the two (or three) blocks and put the resulting block to the front of our list.
  * We also have to think about updating the links of the blocks that were previously pointing to the blocks being changed.
