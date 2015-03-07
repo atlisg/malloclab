@@ -88,8 +88,9 @@ team_t team = {
 /* single word (4) or double word (8) alignment */
 #define ALLIGNMENT 8
 #define WORD 4
-#define OVERHEAD 8
-#define CHUNKSIZE (1 << 12)
+#define OVERHEAD 16
+#define HF_OVERHEAD 8
+#define CHUNKSIZE (1 << 16)
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))  
 
@@ -134,8 +135,8 @@ int mm_init(void)
         return -1;
     }
     PUT(heapBegin, 0);                               // Búa til padding
-    PUT(heapBegin + WORD, PACK(OVERHEAD, 1));        // Búa til prologue header
-    PUT(heapBegin + ALLIGNMENT, PACK(OVERHEAD, 1));  // Búa til prologue footer
+    PUT(heapBegin + WORD, PACK(12, 1));        // Búa til prologue header
+    PUT(heapBegin + ALLIGNMENT, PACK(12, 1));  // Búa til prologue footer
     PUT(heapBegin + ALLIGNMENT + WORD, PACK(0, 1));  // Búa til epilogue header
     heapBegin += ALLIGNMENT;                         // látum heapBegin benda framhjá padding
     // búum til pláss fyrir blokkir
@@ -143,6 +144,8 @@ int mm_init(void)
         return -1;
     }
     freeBegin = NEXT_BLKP(heapBegin);
+    PUT(NEXT_LINK(freeBegin), 0);
+    PUT(PREV_LINK(freeBegin), 0);
     return 0;
 }
 
@@ -162,9 +165,9 @@ void *mm_malloc(size_t size)
 
     /* Adjust block size to include overhead and alignment reqs. */
     if (size <= ALLIGNMENT)
-        asize = ALLIGNMENT + OVERHEAD;
+        asize = ALLIGNMENT + HF_OVERHEAD;
     else
-        asize = ALLIGNMENT * ((size + (OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
+        asize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -226,8 +229,8 @@ static void *extendHeap(size_t words) {
     PUT(HDRP(bp), PACK(size, 0));              /* free block header */
     PUT(FTRP(bp), PACK(size, 0));              /* free block footer */
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));      /* new epilogue header */
-    PUT(HDRP(bp) + WORD, NEXT_BLPT(bp));       // nextlink points to epilogue
-    PUT(HDRP(bp) + ALLIGNMENT, PREV_BLPT(bp)); // prevlink points to prologue
+    PUT(HDRP(bp) + WORD, *NEXT_BLKP(bp));       // nextlink points to epilogue
+    PUT(HDRP(bp) + ALLIGNMENT, *PREV_BLKP(bp)); // prevlink points to prologue
 
     /* Coalesce if the previous block was free */
     return coalesce(bp);
@@ -237,35 +240,49 @@ static void *coalesce(void *bp) {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
+    void *wp = bp;
+        
+    if (prev_alloc && !next_alloc) {      /* Case 2 */
+        // Update freelist ptrs
+        wp = NEXT_BLKP(bp);
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
 
-    if (prev_alloc && next_alloc) {            /* Case 1 */
-        return bp;
-    }
-
-    else if (prev_alloc && !next_alloc) {      /* Case 2 */
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size,0));
-        // todo: Update freelist pointers
-
     }
-
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
+        // update freelist ptrs
+        wp = PREV_BLKP(bp);
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
-        // todo: Update freelist pointers
     }
+    else if (!prev_alloc && !next_alloc) {      /* Case 4 */
+        // update freelist ptrs
+        wp = PREV_BLKP(bp);
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+        wp = NEXT_BLKP(bp);
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
 
-    else {                                     /* Case 4 */
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
             GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
-        // todo: Update freelist pointers
     }
+    // update freelist ptrs in common
+    PUT(PREV_LINK(freeBegin), (size_t)bp);
+    PUT(NEXT_LINK(bp), (size_t)freeBegin);
+    PUT(PREV_LINK(bp), 0);
+    freeBegin = bp;
 
     return bp;
 }
@@ -274,7 +291,7 @@ static void *find_fit(size_t asize) {
     /* first fit search */
     void *bp;
 
-    for (bp = freeBegin; GET_SIZE(HDRP(bp)) > 0; bp = *NEXT_LINK(bp)) {
+    for (bp = freeBegin; *NEXT_LINK(bp) != 0; bp = NEXT_LINK(bp)) {
         if (asize <= GET_SIZE(HDRP(bp))) {
             return bp;
         }
@@ -286,27 +303,30 @@ static void *find_fit(size_t asize) {
 // and split if remainder would be at least minimum block size
 static void place(void *bp, size_t asize) {
     size_t csize = GET_SIZE(HDRP(bp));   
+    void *wp = bp;         // worker ptr
 
-    if ((csize - asize) >= (ALLIGNMENT + OVERHEAD)) { 
-        // update links of free blocks
-        PUT(*PREV_LINK(bp), bp + asize);
-        PUT(bp + asize, *bp);
-        PUT(bp + asize + WORD, *PREV_LINK(bp));
-        PUT(*(NEXT_LINK(bp) + WORD), bp + asize);  
-
+    if ((csize - asize) >= (OVERHEAD)) { 
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
-
+        // update links
+        PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
+        PUT(PREV_LINK(bp), *PREV_LINK(wp));
+        wp = PREV_LINK(bp);
+        PUT(NEXT_LINK(wp), (size_t)bp);
+        wp = NEXT_LINK(bp);
+        PUT(PREV_LINK(wp), (size_t)bp);
     }
     else { 
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
         // update links of freelees
-        PUT(*PREV_LINK(bp), *NEXT_LINK(bp));
-        PUT(PREV_LINK(*NEXT_LINK(bp)), *PREV_LINK(bp));
+        wp = PREV_LINK(bp);
+        PUT(NEXT_LINK(wp), *NEXT_LINK(bp));
+        wp = NEXT_LINK(bp);
+        PUT(PREV_LINK(wp), *PREV_LINK(bp));
     }
 }
 
