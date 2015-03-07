@@ -156,6 +156,7 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
+    printf("About to allocate a block of size %d\n", size);
     size_t asize;      /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
     char *bp;      
@@ -169,6 +170,7 @@ void *mm_malloc(size_t size)
         asize = ALLIGNMENT + HF_OVERHEAD;
     else
         asize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
+    printf("asize = %d\n", asize);
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -177,6 +179,7 @@ void *mm_malloc(size_t size)
     }
 
     /* No fit found. Get more memory and place the block */
+    printf("Going to extend\n");
     extendsize = MAX(asize,CHUNKSIZE);
     if ((bp = extendHeap(extendsize/WORD)) == NULL)
         return NULL;
@@ -292,24 +295,32 @@ static void *coalesce(void *bp) {
 }
 // Find a fit for a block with asize bytes 
 static void *find_fit(size_t asize) {
+    printf("Trying to find a block of size at least = %d\n", asize);
     /* first fit search */
-    void *bp;
+    char *bp;
 
-    for (bp = freeBegin; *NEXT_LINK(bp) != 0; bp = NEXT_LINK(bp)) {
+    printf("\nBeginning for loop\n");
+    for (bp = freeBegin; *NEXT_LINK(bp) != 0; bp = (char *)GET(bp)) {
+        printf("bp = %p\n", bp);
         if (asize <= GET_SIZE(HDRP(bp))) {
+            printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
             return bp;
         }
     }
     // todo: make this best fit.
+    printf("No fit found, returning NULL from find_fit\n");
     return NULL; /* no fit */
 }
 // Place block of asize bytes at start of free block bp 
 // and split if remainder would be at least minimum block size
 static void place(void *bp, size_t asize) {
+    printf("\nPlacing the allocated block of size: %d onto address %p\n", asize, bp);
     size_t csize = GET_SIZE(HDRP(bp));   
+    printf("csize = %d\n", csize);
     void *wp = bp;         // worker ptr
 
     if ((csize - asize) >= (OVERHEAD)) { 
+        printf("Splitting them up\n");
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
@@ -324,6 +335,7 @@ static void place(void *bp, size_t asize) {
         PUT(PREV_LINK(wp), (size_t)bp);
     }
     else { 
+        printf("Remainder too small to become an individual block\n");
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
         // update links of freelees
