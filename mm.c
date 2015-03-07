@@ -142,6 +142,7 @@ int mm_init(void)
     if (extendHeap(CHUNKSIZE/WORD) == NULL) {
         return -1;
     }
+    freeBegin = NEXT_BLKP(heapBegin);
     return 0;
 }
 
