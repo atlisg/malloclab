@@ -135,17 +135,18 @@ int mm_init(void)
         return -1;
     }
     PUT(heapBegin, 0);                               // Búa til padding
-    PUT(heapBegin + WORD, PACK(12, 1));        // Búa til prologue header
-    PUT(heapBegin + ALLIGNMENT, PACK(12, 1));  // Búa til prologue footer
+    PUT(heapBegin + WORD, PACK(12, 1));              // Búa til prologue header
+    PUT(heapBegin + ALLIGNMENT, PACK(12, 1));        // Búa til prologue footer
     PUT(heapBegin + ALLIGNMENT + WORD, PACK(0, 1));  // Búa til epilogue header
     heapBegin += ALLIGNMENT;                         // látum heapBegin benda framhjá padding
+
+    freeBegin = NULL;
     // búum til pláss fyrir blokkir
     if (extendHeap(CHUNKSIZE/WORD) == NULL) {
+        printf("extendHeap skilaði NULL\n");
         return -1;
     }
-    freeBegin = NEXT_BLKP(heapBegin);
-    PUT(NEXT_LINK(freeBegin), 0);
-    PUT(PREV_LINK(freeBegin), 0);
+
     return 0;
 }
 
@@ -226,11 +227,11 @@ static void *extendHeap(size_t words) {
         return NULL;
 
     /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));              /* free block header */
-    PUT(FTRP(bp), PACK(size, 0));              /* free block footer */
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));      /* new epilogue header */
-    PUT(HDRP(bp) + WORD, *NEXT_BLKP(bp));       // nextlink points to epilogue
-    PUT(HDRP(bp) + ALLIGNMENT, *PREV_BLKP(bp)); // prevlink points to prologue
+    PUT(HDRP(bp), PACK(size, 0));               /* free block header */
+    PUT(FTRP(bp), PACK(size, 0));               /* free block footer */
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       /* new epilogue header */
+    PUT(NEXT_LINK(bp), 0);                      // nextlink points to NULL
+    PUT(PREV_LINK(bp), 0);                      // prevlink points to NULL
 
     /* Coalesce if the previous block was free */
     return coalesce(bp);
@@ -279,9 +280,12 @@ static void *coalesce(void *bp) {
         bp = PREV_BLKP(bp);
     }
     // update freelist ptrs in common
-    PUT(PREV_LINK(freeBegin), (size_t)bp);
-    PUT(NEXT_LINK(bp), (size_t)freeBegin);
-    PUT(PREV_LINK(bp), 0);
+
+    if (freeBegin != NULL) {
+        PUT(PREV_LINK(freeBegin), (size_t)bp);
+        PUT(NEXT_LINK(bp), (size_t)freeBegin);
+        PUT(PREV_LINK(bp), 0);
+    }
     freeBegin = bp;
 
     return bp;
