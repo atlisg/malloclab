@@ -85,6 +85,8 @@ team_t team = {
     ""
 };
 
+extern int verbose;
+
 /* single word (4) or double word (8) alignment */
 #define ALLIGNMENT 8
 #define WORD 4
@@ -123,8 +125,9 @@ static void *extendHeap(size_t words);
 static void place(void *bp, size_t asize);
 static void *find_fit(size_t asize);
 static void *coalesce(void *bp);
-//static void printblock(void *bp); 
-//static void checkblock(void *bp);
+static void printblock(void *bp); 
+static void checkblock(void *bp);
+void mm_checkheap(int verbose);
 
 /* 
  * mm_init - initialize the malloc package.
@@ -143,7 +146,7 @@ int mm_init(void)
     freeBegin = NULL;
     // búum til pláss fyrir blokkir
     if (extendHeap(CHUNKSIZE/WORD) == NULL) {
-        printf("extendHeap skilaði NULL\n");
+        // printf("extendHeap skilaði NULL\n");
         return -1;
     }
 
@@ -156,7 +159,7 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    printf("About to allocate a block of size %d\n", size);
+    // printf("About to allocate a block of size %d\n", size);
     size_t asize;      /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
     char *bp;      
@@ -170,20 +173,24 @@ void *mm_malloc(size_t size)
         asize = ALLIGNMENT + HF_OVERHEAD;
     else
         asize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
-    printf("asize = %d\n", asize);
+    // printf("asize = %d\n", asize);
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
+        // printf("er að fara að kalla á place með bp = %p og asize = %d", bp, asize);
         place(bp, asize);
+        // printf("var að klára place með bp = %p og asize = %d\n", bp, asize);
+        mm_checkheap(verbose);
         return bp;
     }
 
     /* No fit found. Get more memory and place the block */
-    printf("Going to extend\n");
+    // printf("Going to extend\n");
     extendsize = MAX(asize,CHUNKSIZE);
     if ((bp = extendHeap(extendsize/WORD)) == NULL)
         return NULL;
     place(bp, asize);
+    mm_checkheap(verbose);
     return bp;
 }
 
@@ -192,11 +199,12 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    // printf("Kemst í free");
     size_t size = GET_SIZE(HDRP(ptr));
-
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
+    mm_checkheap(verbose);
     // Jess ég er frír!
 }
 
@@ -249,8 +257,8 @@ static void *coalesce(void *bp) {
     if (prev_alloc && !next_alloc) {      /* Case 2 */
         // Update freelist ptrs
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
+        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
@@ -259,8 +267,8 @@ static void *coalesce(void *bp) {
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
         // update freelist ptrs
         wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
+        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
@@ -270,11 +278,11 @@ static void *coalesce(void *bp) {
     else if (!prev_alloc && !next_alloc) {      /* Case 4 */
         // update freelist ptrs
         wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
+        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
+        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
+        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
             GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -285,48 +293,57 @@ static void *coalesce(void *bp) {
     // update freelist ptrs in common
 
     if (freeBegin != NULL) {
-        PUT(PREV_LINK(freeBegin), (size_t)bp);
-        PUT(NEXT_LINK(bp), (size_t)freeBegin);
-        PUT(PREV_LINK(bp), 0);
+        PUT(PREV_LINK(GET(freeBegin)), (size_t)bp);
+        PUT(NEXT_LINK(GET(bp)), (size_t)freeBegin);
+        PUT(PREV_LINK(GET(bp)), 0);
     }
+    // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
     freeBegin = bp;
 
     return bp;
 }
 // Find a fit for a block with asize bytes 
 static void *find_fit(size_t asize) {
-    printf("Trying to find a block of size at least = %d\n", asize);
+    // printf("Trying to find a block of size at least = %d\n", asize);
     /* first fit search */
-    char *bp;
+    char *bp = freeBegin;
 
-    printf("\nBeginning for loop\n");
-    for (bp = freeBegin; *NEXT_LINK(bp) != 0; bp = (char *)GET(bp)) {
-        printf("bp = %p\n", bp);
-        if (asize <= GET_SIZE(HDRP(bp))) {
-            printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
-            return bp;
-        }
+    // printf("\nBeginning for loop\n");
+    if (bp != NULL) {
+        do {
+            // printf("bp = %p\n", bp);
+            if (asize <= GET_SIZE(HDRP(bp))) {
+                // printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
+                return bp;
+            }
+            bp = (char *)GET(bp);
+        } while (*NEXT_LINK(bp) != 0);
     }
     // todo: make this best fit.
-    printf("No fit found, returning NULL from find_fit\n");
+    // printf("No fit found, returning NULL from find_fit\n");
     return NULL; /* no fit */
 }
 // Place block of asize bytes at start of free block bp 
 // and split if remainder would be at least minimum block size
 static void place(void *bp, size_t asize) {
-    printf("\nPlacing the allocated block of size: %d onto address %p\n", asize, bp);
+    // printf("\nPlacing the allocated block of size: %d onto address %p\n", asize, bp);
     size_t csize = GET_SIZE(HDRP(bp));   
-    printf("csize = %d\n", csize);
+    // printf("csize = %d\n", csize);
     void *wp = bp;         // worker ptr
 
     if ((csize - asize) >= (OVERHEAD)) { 
-        printf("Splitting them up\n");
+        // printf("Splitting them up\n");
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
         // update links
+        // athuga hvort bp sé fremst í free listanum.
+        if (freeBegin == wp) {
+            // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
+            freeBegin = bp;
+        }
         PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
         PUT(PREV_LINK(bp), *PREV_LINK(wp));
         wp = PREV_LINK(bp);
@@ -345,7 +362,54 @@ static void place(void *bp, size_t asize) {
         PUT(PREV_LINK(wp), *PREV_LINK(bp));
     }
 }
+// Check the heap for consistency 
+void mm_checkheap(int verbose) 
+{
+    char *bp = heapBegin;
 
+    if (verbose)
+        printf("Heap (%p):\n", heapBegin);
+
+    if ((GET_SIZE(HDRP(heapBegin)) != ALLIGNMENT) || !GET_ALLOC(HDRP(heapBegin)))
+        printf("Bad prologue header\n");
+    checkblock(heapBegin);
+
+    for (bp = heapBegin; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (verbose) 
+            printblock(bp);
+        checkblock(bp);
+    }
+     
+    if (verbose)
+        printblock(bp);
+    if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
+        printf("Bad epilogue header\n");
+}
+static void printblock(void *bp) 
+{
+    size_t hsize, halloc, fsize, falloc;
+
+    hsize = GET_SIZE(HDRP(bp));
+    halloc = GET_ALLOC(HDRP(bp));  
+    fsize = GET_SIZE(FTRP(bp));
+    falloc = GET_ALLOC(FTRP(bp));  
+    
+    if (hsize == 0) {
+        printf("%p: EOL\n", bp);
+        return;
+    }
+
+    printf("%p: header: [%d:%c] footer: [%d:%c]\n", bp, 
+           hsize, (halloc ? 'a' : 'f'), 
+           fsize, (falloc ? 'a' : 'f')); 
+}
+static void checkblock(void *bp) 
+{
+    if ((size_t)bp % 8)
+        printf("Error: %p is not doubleword aligned\n", bp);
+    if (GET(HDRP(bp)) != GET(FTRP(bp)))
+        printf("Error: header does not match footer\n");
+}
 
 
 
