@@ -102,8 +102,9 @@ extern int verbose;
 #define PUT(p, val)  (*(size_t *)(p) = (val))
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc)  ((size) | (alloc))
-#define GET_SIZE(p)  (GET(p) & ~0x7)
-#define GET_ALLOC(p) (GET(p) & 0x1)
+#define GET_SIZE(p)    (GET(p) & ~0x7)
+#define GET_ALLOC(p)   (GET(p) & 0x1)
+#define GET_LAST(p)    (GET(p) & 0x2)
 
 /* Given block ptr bp, compute address of its header and footer */
 #define HDRP(bp)       ((char *)(bp) - WORD)  
@@ -138,8 +139,8 @@ int mm_init(void)
         return -1;
     }
     PUT(heapBegin, 0);                               // Búa til padding
-    PUT(heapBegin + WORD, PACK(12, 1));              // Búa til prologue header
-    PUT(heapBegin + ALLIGNMENT, PACK(12, 1));        // Búa til prologue footer
+    PUT(heapBegin + WORD, PACK(ALLIGNMENT, 1));              // Búa til prologue header
+    PUT(heapBegin + ALLIGNMENT, PACK(ALLIGNMENT, 1));        // Búa til prologue footer
     PUT(heapBegin + ALLIGNMENT + WORD, PACK(0, 1));  // Búa til epilogue header
     heapBegin += ALLIGNMENT;                         // látum heapBegin benda framhjá padding
 
@@ -238,9 +239,9 @@ static void *extendHeap(size_t words) {
         return NULL;
 
     /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));               /* free block header */
-    PUT(FTRP(bp), PACK(size, 0));               /* free block footer */
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       /* new epilogue header */
+    PUT(HDRP(bp), PACK(size, 2));               // free block header and set it as last
+    PUT(FTRP(bp), PACK(size, 2));               // free block footer and set it as last
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       // new epilogue header
     PUT(NEXT_LINK(bp), 0);                      // nextlink points to NULL
     PUT(PREV_LINK(bp), 0);                      // prevlink points to NULL
 
@@ -253,22 +254,28 @@ static void *coalesce(void *bp) {
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
     void *wp = bp;
-        
+
     if (prev_alloc && !next_alloc) {      /* Case 2 */
         // Update freelist ptrs
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
-        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size,0));
+        size_t last = GET_LAST(HDRP(wp));
+        if (last) {
+            PUT(HDRP(bp), PACK(size, 2));
+            PUT(FTRP(bp), PACK(size, 2));
+        } else {
+            PUT(HDRP(bp), PACK(size, 0));
+            PUT(FTRP(bp), PACK(size, 0));
+        }
     }
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
         // update freelist ptrs
         wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
-        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
@@ -278,11 +285,11 @@ static void *coalesce(void *bp) {
     else if (!prev_alloc && !next_alloc) {      /* Case 4 */
         // update freelist ptrs
         wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
-        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(GET(PREV_LINK(wp))), *NEXT_LINK(wp));
-        PUT(PREV_LINK(GET(NEXT_LINK(wp))), *PREV_LINK(wp));
+        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
+        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
             GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -293,9 +300,9 @@ static void *coalesce(void *bp) {
     // update freelist ptrs in common
 
     if (freeBegin != NULL) {
-        PUT(PREV_LINK(GET(freeBegin)), (size_t)bp);
-        PUT(NEXT_LINK(GET(bp)), (size_t)freeBegin);
-        PUT(PREV_LINK(GET(bp)), 0);
+        PUT(freeBegin+WORD, (size_t)bp);
+        PUT(bp, (size_t)freeBegin);
+        PUT(bp+WORD, 0);
     }
     // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
     freeBegin = bp;
@@ -316,8 +323,8 @@ static void *find_fit(size_t asize) {
                 // printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
                 return bp;
             }
-            bp = (char *)GET(bp);
-        } while (*NEXT_LINK(bp) != 0);
+            bp = NEXT_LINK(bp);
+        } while (GET(NEXT_LINK(bp)) != 0);
     }
     // todo: make this best fit.
     // printf("No fit found, returning NULL from find_fit\n");
@@ -327,7 +334,8 @@ static void *find_fit(size_t asize) {
 // and split if remainder would be at least minimum block size
 static void place(void *bp, size_t asize) {
     // printf("\nPlacing the allocated block of size: %d onto address %p\n", asize, bp);
-    size_t csize = GET_SIZE(HDRP(bp));   
+    size_t csize = GET_SIZE(HDRP(bp));
+    size_t last  = GET_LAST(HDRP(bp));
     // printf("csize = %d\n", csize);
     void *wp = bp;         // worker ptr
 
@@ -336,20 +344,28 @@ static void place(void *bp, size_t asize) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize-asize, 0));
-        PUT(FTRP(bp), PACK(csize-asize, 0));
+        if (last) {
+            PUT(HDRP(bp), PACK(csize-asize, 2));
+            PUT(FTRP(bp), PACK(csize-asize, 2));
+        } else {
+            PUT(HDRP(bp), PACK(csize-asize, 0));
+            PUT(FTRP(bp), PACK(csize-asize, 0));
+        }
         // update links
         // athuga hvort bp sé fremst í free listanum.
+        PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
+        PUT(PREV_LINK(bp), *PREV_LINK(wp));
         if (freeBegin == wp) {
             // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
             freeBegin = bp;
+        } else {
+            wp = PREV_LINK(bp);
+            PUT(NEXT_LINK(wp), (size_t)bp);
         }
-        PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
-        PUT(PREV_LINK(bp), *PREV_LINK(wp));
-        wp = PREV_LINK(bp);
-        PUT(NEXT_LINK(wp), (size_t)bp);
-        wp = NEXT_LINK(bp);
-        PUT(PREV_LINK(wp), (size_t)bp);
+        if (GET(NEXT_LINK(bp))) {
+            wp = NEXT_LINK(bp);
+            PUT(PREV_LINK(wp), (size_t)bp);
+        }
     }
     else { 
         printf("Remainder too small to become an individual block\n");
@@ -366,7 +382,7 @@ static void place(void *bp, size_t asize) {
 void mm_checkheap(int verbose) 
 {
     char *bp = heapBegin;
-
+    // print heap
     if (verbose)
         printf("Heap (%p):\n", heapBegin);
 
@@ -384,24 +400,36 @@ void mm_checkheap(int verbose)
         printblock(bp);
     if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
         printf("Bad epilogue header\n");
+
+    // print freelist
+    bp = freeBegin;
+    if (verbose) {
+        printf("Free (%p):\n", freeBegin);
+        for (bp = freeBegin; !GET_LAST(HDRP(bp)); bp = NEXT_LINK(bp)) {
+            printblock(bp);
+        }
+        printblock(bp);
+    }
 }
 static void printblock(void *bp) 
 {
-    size_t hsize, halloc, fsize, falloc;
+    size_t hsize, halloc, hlast, fsize, falloc, flast;
 
     hsize = GET_SIZE(HDRP(bp));
     halloc = GET_ALLOC(HDRP(bp));  
+    hlast = GET_LAST(HDRP(bp));
     fsize = GET_SIZE(FTRP(bp));
-    falloc = GET_ALLOC(FTRP(bp));  
+    falloc = GET_ALLOC(FTRP(bp)); 
+    flast = GET_LAST(HDRP(bp)); 
     
     if (hsize == 0) {
         printf("%p: EOL\n", bp);
         return;
     }
 
-    printf("%p: header: [%d:%c] footer: [%d:%c]\n", bp, 
-           hsize, (halloc ? 'a' : 'f'), 
-           fsize, (falloc ? 'a' : 'f')); 
+    printf("%p: header: [%d:%c:%c] footer: [%d:%c:%c]\n", bp, 
+           hsize, (halloc ? 'a' : 'f'), (hlast ? 'l' : 'n'),
+           fsize, (falloc ? 'a' : 'f'), (flast ? 'l' : 'n')); 
 }
 static void checkblock(void *bp) 
 {
