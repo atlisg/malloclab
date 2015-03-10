@@ -128,7 +128,9 @@ static void *find_fit(size_t asize);
 static void *coalesce(void *bp);
 static void printblock(void *bp); 
 static void checkblock(void *bp);
+static void removeAdj(void *wp);
 void mm_checkheap(int verbose);
+
 
 /* 
  * mm_init - initialize the malloc package.
@@ -256,58 +258,51 @@ static void *coalesce(void *bp) {
     void *wp = bp;
 
     if (prev_alloc && !next_alloc) {      /* Case 2 */
-        // Update freelist ptrs
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
-
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        size_t last = GET_LAST(HDRP(wp));
-        if (last) {
-            PUT(HDRP(bp), PACK(size, 2));
-            PUT(FTRP(bp), PACK(size, 2));
-        } else {
-            PUT(HDRP(bp), PACK(size, 0));
-            PUT(FTRP(bp), PACK(size, 0));
-        }
+        size += GET_SIZE(HDRP(wp));
+        removeAdj(wp);
     }
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
-        // update freelist ptrs
-        wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
-
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
+     	wp = PREV_BLKP(bp);
+        size += GET_SIZE(HDRP(wp));
+        removeAdj(wp);
+        bp = wp;
     }
     else if (!prev_alloc && !next_alloc) {      /* Case 4 */
-        // update freelist ptrs
-        wp = PREV_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
         wp = NEXT_BLKP(bp);
-        PUT(NEXT_LINK(PREV_LINK(wp)), *NEXT_LINK(wp));
-        PUT(PREV_LINK(NEXT_LINK(wp)), *PREV_LINK(wp));
-
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
-            GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
+        size += GET_SIZE(HDRP(wp));
+        removeAdj(wp);
+        wp = PREV_BLKP(bp);
+        size += GET_SIZE(HDRP(wp));
+        removeAdj(wp);
+    	bp = wp;
     }
-    // update freelist ptrs in common
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
 
     if (freeBegin != NULL) {
-        PUT(freeBegin+WORD, (size_t)bp);
-        PUT(bp, (size_t)freeBegin);
-        PUT(bp+WORD, 0);
+    	PUT(bp, (size_t)freeBegin);
+	PUT(PREV_LINK(freeBegin), (size_t)bp);
+    } else {
+    	PUT(NEXT_LINK(bp), 0);
     }
-    // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
+    PUT(PREV_LINK(bp), 0);
     freeBegin = bp;
-
     return bp;
+}
+
+static void removeAdj(void *wp) {
+    if (GET(NEXT_LINK(wp)) == 0 && GET(PREV_LINK(wp)) == 0) {
+    	freeBegin = NULL;
+    } else if (GET(NEXT_LINK(wp)) == 0) {
+    	PUT(NEXT_LINK((size_t*)GET(PREV_LINK(wp))), 0);
+    } else if (GET(PREV_LINK(wp)) == 0)  {
+    	freeBegin = (void*)GET(wp);
+    	PUT(PREV_LINK(freeBegin), 0);
+    } else {
+    	PUT(NEXT_LINK((size_t*)GET(PREV_LINK(wp))), (size_t)GET(NEXT_LINK(wp)));
+    	PUT(PREV_LINK((size_t*)GET(NEXT_LINK(wp))), (size_t)GET(PREV_LINK(wp)));
+    }
 }
 // Find a fit for a block with asize bytes 
 static void *find_fit(size_t asize) {
@@ -317,14 +312,18 @@ static void *find_fit(size_t asize) {
 
     // printf("\nBeginning for loop\n");
     if (bp != NULL) {
-        do {
+        size_t running = 1;
+        while (running) {
             // printf("bp = %p\n", bp);
+		if (GET(NEXT_LINK(bp)) == 0) {
+                running = 0;
+            }
             if (asize <= GET_SIZE(HDRP(bp))) {
                 // printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
                 return bp;
             }
-            bp = NEXT_LINK(bp);
-        } while (GET(NEXT_LINK(bp)) != 0);
+            bp = (char*)GET(NEXT_LINK(bp));
+        } 
     }
     // todo: make this best fit.
     // printf("No fit found, returning NULL from find_fit\n");
@@ -344,14 +343,8 @@ static void place(void *bp, size_t asize) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
-        if (last) {
-            PUT(HDRP(bp), PACK(csize-asize, 2));
-            PUT(FTRP(bp), PACK(csize-asize, 2));
-        } else {
-            PUT(HDRP(bp), PACK(csize-asize, 0));
-            PUT(FTRP(bp), PACK(csize-asize, 0));
-        }
-        // update links
+        PUT(HDRP(bp), PACK(csize-asize, 0));
+        PUT(FTRP(bp), PACK(csize-asize, 0));
         // athuga hvort bp sé fremst í free listanum.
         PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
         PUT(PREV_LINK(bp), *PREV_LINK(wp));
@@ -405,7 +398,7 @@ void mm_checkheap(int verbose)
     bp = freeBegin;
     if (verbose) {
         printf("Free (%p):\n", freeBegin);
-        for (bp = freeBegin; !GET_LAST(HDRP(bp)); bp = NEXT_LINK(bp)) {
+        for (bp = freeBegin; GET(NEXT_LINK(bp)) != 0; bp = (char*)GET(NEXT_LINK(bp))) {
             printblock(bp);
         }
         printblock(bp);
