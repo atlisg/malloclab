@@ -276,7 +276,7 @@ static void *extendHeap(size_t words) {
     return coalesce(bp);
 }
 // Boundary tag coalescing. Return ptr to coalesced block
-static void *coalesce2(void *bp) {
+static void *coalesce(void *bp) {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
@@ -311,31 +311,34 @@ static void *coalesce2(void *bp) {
 }
 
 // amazing
-static void *coalesce() {
-    for (void *bp = freeBegin; i < count; ++i) {
-        //
-    }
+// static void *coalesce2() {
+//     for (void *bp = freeBegin; GET(NEXT_LINK(bp)) != 0; bp = NEXT_OF(bp)) {
+        
+//     }
 
-    return NULL;
-}
+//     return NULL;
+// }
 
-static void *findEdges(void *curr, size_t direction) {
-    if (!GET_ALLOC(HDRP(curr)))
-    {
-        if (GET(NEXT_LINK(curr)))
-        {
-            return findEdges();
-        } else {
-            return curr;
-        }
-    }
-    else {
-        if (direction)
-            return PREV_BLKP(curr);
-        else
-            return NEXT_BLKP(curr);
-    }
-}
+// static void *findEdges(void *curr, size_t direction) {
+//     if (!GET_ALLOC(HDRP(curr)))
+//     {
+//         if (GET(NEXT_LINK(curr)))
+//         {
+//             if (direction)
+//                 return findEdges(NEXT_OF(curr), direction);
+//             else
+//                 return findEdges(PREV_OF(curr), direction);
+//         } else {
+//             return curr;
+//         }
+//     }
+//     else {
+//         if (direction)
+//             return PREV_BLKP(curr);
+//         else
+//             return NEXT_BLKP(curr);
+//     }
+// }
 
 static void insertFront(void *bp) {
     if (freeBegin != NULL) {
