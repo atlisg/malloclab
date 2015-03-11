@@ -208,7 +208,7 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
-   // mm_checkheap(verbose);
+    //mm_checkheap(verbose);
     // Jess ég er frír!
 }
 
@@ -217,19 +217,43 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *newp;
-    size_t copySize;
-
-    if ((newp = mm_malloc(size)) == NULL) {
-        printf("ERROR: mm_malloc failed in mm_realloc\n");
-        exit(1);
+    if (size == 0) {
+        mm_free(ptr);
+        return ptr;
     }
-    copySize = GET_SIZE(HDRP(ptr));
-    if (size < copySize)
-        copySize = size;
-    memcpy(newp, ptr, copySize);
-    mm_free(ptr);
-    return newp;
+    if (ptr == NULL) {
+        if ((ptr = mm_malloc(size)) == NULL) {
+            printf("ERROR: mm_malloc failed in mm_realloc\n");
+            exit(1);
+        } else
+            return ptr;
+    }
+
+    size_t oldSize = GET_SIZE(HDRP(ptr));
+    size_t newSize;
+
+    // ReAllocate the block pointed to by ptr (change the block size)
+    if (size <= ALLIGNMENT) /*adjusting the size*/
+        newSize = ALLIGNMENT + HF_OVERHEAD;
+    else
+        newSize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
+
+    if (newSize == oldSize) return ptr;
+    if (newSize > oldSize) { /*simply allocate a block of newSize and free the old one*/
+        void *nptr = mm_malloc(size);
+        if (nptr == NULL) {
+            printf("ERROR: mm_malloc failed in mm_realloc\n");
+            exit(1);
+        } else {
+            memcpy(nptr, ptr, oldSize);
+            mm_free(ptr);
+            return nptr;
+        }
+    } else {
+        place(ptr, newSize);
+    }
+
+    return NULL;
 }
 // Extend heap with free block and return its block pointer
 static void *extendHeap(size_t words) {
@@ -252,7 +276,7 @@ static void *extendHeap(size_t words) {
     return coalesce(bp);
 }
 // Boundary tag coalescing. Return ptr to coalesced block
-static void *coalesce(void *bp) {
+static void *coalesce2(void *bp) {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
@@ -286,6 +310,33 @@ static void *coalesce(void *bp) {
     return bp;
 }
 
+// amazing
+static void *coalesce() {
+    for (void *bp = freeBegin; i < count; ++i) {
+        //
+    }
+
+    return NULL;
+}
+
+static void *findEdges(void *curr, size_t direction) {
+    if (!GET_ALLOC(HDRP(curr)))
+    {
+        if (GET(NEXT_LINK(curr)))
+        {
+            return findEdges();
+        } else {
+            return curr;
+        }
+    }
+    else {
+        if (direction)
+            return PREV_BLKP(curr);
+        else
+            return NEXT_BLKP(curr);
+    }
+}
+
 static void insertFront(void *bp) {
     if (freeBegin != NULL) {
     	PUT(bp, (size_t)freeBegin);
@@ -312,27 +363,22 @@ static void removeAdj(void *wp) {
 }
 // Find a fit for a block with asize bytes 
 static void *find_fit(size_t asize) {
-    // printf("Trying to find a block of size at least = %d\n", asize);
     /* first fit search */
     char *bp = freeBegin;
 
-    // printf("\nBeginning for loop\n");
     if (bp != NULL) {
         size_t running = 1;
         while (running) {
-            // printf("bp = %p\n", bp);
 		if (GET(NEXT_LINK(bp)) == 0) {
                 running = 0;
             }
             if (asize <= GET_SIZE(HDRP(bp))) {
-                // printf("bp has enough size (%d)\n", GET_SIZE(HDRP(bp)));
                 return bp;
             }
             bp = (char*)GET(NEXT_LINK(bp));
         } 
     }
     // todo: make this best fit.
-    // printf("No fit found, returning NULL from find_fit\n");
     return NULL; /* no fit */
 }
 // Place block of asize bytes at start of free block bp 
@@ -340,7 +386,8 @@ static void *find_fit(size_t asize) {
 static void place(void *bp, size_t asize) {
     size_t csize = GET_SIZE(HDRP(bp));
     // remove bp from the freelist
-    removeAdj(bp);
+    if (!GET_ALLOC(HDRP(bp)))
+        removeAdj(bp);
 
     if ((csize - asize) >= (OVERHEAD)) { 
         // splitting them
