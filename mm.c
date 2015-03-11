@@ -92,7 +92,7 @@ extern int verbose;
 #define WORD 4
 #define OVERHEAD 16
 #define HF_OVERHEAD 8
-#define CHUNKSIZE (1 << 16)
+#define CHUNKSIZE (1 << 12)
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))  
 
@@ -129,6 +129,7 @@ static void *coalesce(void *bp);
 static void printblock(void *bp); 
 static void checkblock(void *bp);
 static void removeAdj(void *wp);
+static void insertFront(void *bp);
 void mm_checkheap(int verbose);
 
 
@@ -183,7 +184,7 @@ void *mm_malloc(size_t size)
         // printf("er að fara að kalla á place með bp = %p og asize = %d", bp, asize);
         place(bp, asize);
         // printf("var að klára place með bp = %p og asize = %d\n", bp, asize);
-        mm_checkheap(verbose);
+        //mm_checkheap(verbose);
         return bp;
     }
 
@@ -193,7 +194,7 @@ void *mm_malloc(size_t size)
     if ((bp = extendHeap(extendsize/WORD)) == NULL)
         return NULL;
     place(bp, asize);
-    mm_checkheap(verbose);
+    //mm_checkheap(verbose);
     return bp;
 }
 
@@ -207,7 +208,7 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
-    mm_checkheap(verbose);
+   // mm_checkheap(verbose);
     // Jess ég er frír!
 }
 
@@ -280,6 +281,12 @@ static void *coalesce(void *bp) {
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
 
+    insertFront(bp);
+
+    return bp;
+}
+
+static void insertFront(void *bp) {
     if (freeBegin != NULL) {
     	PUT(bp, (size_t)freeBegin);
 	PUT(PREV_LINK(freeBegin), (size_t)bp);
@@ -288,7 +295,6 @@ static void *coalesce(void *bp) {
     }
     PUT(PREV_LINK(bp), 0);
     freeBegin = bp;
-    return bp;
 }
 
 static void removeAdj(void *wp) {
@@ -332,43 +338,25 @@ static void *find_fit(size_t asize) {
 // Place block of asize bytes at start of free block bp 
 // and split if remainder would be at least minimum block size
 static void place(void *bp, size_t asize) {
-    // printf("\nPlacing the allocated block of size: %d onto address %p\n", asize, bp);
     size_t csize = GET_SIZE(HDRP(bp));
-    size_t last  = GET_LAST(HDRP(bp));
-    // printf("csize = %d\n", csize);
-    void *wp = bp;         // worker ptr
+    // remove bp from the freelist
+    removeAdj(bp);
 
     if ((csize - asize) >= (OVERHEAD)) { 
-        // printf("Splitting them up\n");
+        // splitting them
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
-        // athuga hvort bp sé fremst í free listanum.
-        PUT(NEXT_LINK(bp), *NEXT_LINK(wp));
-        PUT(PREV_LINK(bp), *PREV_LINK(wp));
-        if (freeBegin == wp) {
-            // printf("freeBegin taking value of bp, freeBegin = %p bp = %p\n", freeBegin, bp);
-            freeBegin = bp;
-        } else {
-            wp = PREV_LINK(bp);
-            PUT(NEXT_LINK(wp), (size_t)bp);
-        }
-        if (GET(NEXT_LINK(bp))) {
-            wp = NEXT_LINK(bp);
-            PUT(PREV_LINK(wp), (size_t)bp);
-        }
+        
+        // insert bp into freelist
+        insertFront(bp);
     }
     else { 
-        printf("Remainder too small to become an individual block\n");
+        // not splitting, remainder too small
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
-        // update links of freelees
-        wp = PREV_LINK(bp);
-        PUT(NEXT_LINK(wp), *NEXT_LINK(bp));
-        wp = NEXT_LINK(bp);
-        PUT(PREV_LINK(wp), *PREV_LINK(bp));
     }
 }
 // Check the heap for consistency 
