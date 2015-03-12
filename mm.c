@@ -1,5 +1,5 @@
 /* 
- * mm.c -  Explicit free lists, LIFO policy, and boundary tag coalescing. 
+ * mm.c -  Explicit free list, LIFO policy, and boundary tag coalescing. 
  *
  * Each block has header and footer of the form:
  * 
@@ -11,20 +11,22 @@
  * where s are the meaningful size bits and a/f is set 
  * iff the block is allocated. 
  *
- * Each free block also has a nextlink and a prevlink and looks like this (next- and prevlink are 32-bit addressess pointing to the next and previous (respectively) free blocks in the free list):
+ * Each free block also has a nextlink and a prevlink and looks like this 
+ * (next- and prevlink are 32-bit addressess pointing to the next and previous 
+ * (respectively) free blocks in the free list):
  *
  *      -------------------------------------------------------
- *     |  header  | nextlink | prevlink | padding   |  footer  |
+ *     |  header  | nextlink | prevlink |  padding  |  footer  |
  *      -------------------------------------------------------
  *
  * Padding can be of varying size depending on the block size itself.
  *
- * The list has the following form:
+ * The heaplist has the following form:
  *
  * begin                                                           end
  * heap                                                           heap  
  *  -----------------------------------------------------------------
- * |  pad   | hdr(8:a) | ftr(8:a) | zero or more usr blks | hdr(8:a) |
+ * |  pad   | hdr(8:a) | ftr(8:a) | zero or more usr blks | hdr(0:a) |
  *  -----------------------------------------------------------------
  *          |      prologue       |                       | epilogue |
  *          |        block        |                       |   block  |
@@ -32,18 +34,24 @@
  * The allocated prologue and epilogue blocks are overhead that
  * eliminate edge conditions during coalescing.
  * 
- * We plan to implement this like so:
+ * +++++++++++++++++++++++++++++++
+ *         Implementation:
+ * +++++++++++++++++++++++++++++++
  *
- * Initialize: Make padding, prologue and epilogue block, as well as making space for the allocating of blocks on the imaginary heap.
+ * The three main functions are mm_free, mm_malloc and mm_realloc,
+ * they are implemented as described below.
  *
- * Free: When we are asked to free a block we first check if the blocks next to it are free as well. 
- * If they are not, we simply free the block and put it at the front of our list.
- * If it has a free adjecent block, we first coalesce the two (or three) blocks and put the resulting block to the front of our list.
- * We also have to think about updating the links of the blocks that were previously pointing to the blocks being changed.
+ * Free: When we are asked to free a block we set the block's header and footer
+ * allocated bit to 0 and check if it can coalesce.
  *
- * Allocate: We find the first free block of matching size with linear search.
- * If there is no match, we find the first free block of matching size++ and so on.
- * If we have time, we will try to implement segregation list to make this a faster process.
+ * Allocate: We find the first free block of sufficient size with linear search.
+ * If there is no match, we extend the heap just enough so we can fit it.
+ *
+ * ReAllocate: If we are decreasing the block's size we simply split the block into two iff
+ * the remainder is big enough to be a block.
+ * If we are increasing the block's size we first check if adjacent blocks are free and
+ * of sufficient size for the block enlargement. If not, we allocate a new block, copy the data
+ * and free the old block.
  *
  */
 #include <stdio.h>
@@ -87,39 +95,36 @@ team_t team = {
 
 extern int verbose;
 
-/* single word (4) or double word (8) alignment */
-#define ALLIGNMENT 8
+#define ALIGNMENT 8
 #define WORD 4
 #define OVERHEAD 16
 #define HF_OVERHEAD 8
-#define CHUNKSIZE (1 << 12)
-
-#define MAX(x, y) ((x) > (y)? (x) : (y))  
 
 /* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 #define GET(p)       (*(size_t *)(p))
 #define PUT(p, val)  (*(size_t *)(p) = (val))
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc)  ((size) | (alloc))
 #define GET_SIZE(p)    (GET(p) & ~0x7)
 #define GET_ALLOC(p)   (GET(p) & 0x1)
-#define GET_LAST(p)    (GET(p) & 0x2)
 
 /* Given block ptr bp, compute address of its header and footer */
 #define HDRP(bp)       ((char *)(bp) - WORD)  
-#define FTRP(bp)       ((char *)(bp) + GET_SIZE(HDRP(bp)) - ALLIGNMENT)
+#define FTRP(bp)       ((char *)(bp) + GET_SIZE(HDRP(bp)) - ALIGNMENT)
 
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp)  ((char *)(bp) + GET_SIZE(((char *)(bp) - WORD)))
-#define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - ALLIGNMENT)))
+#define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - ALIGNMENT)))
 
+/* Given block ptr bp, compute address of where it keeps it's next and prev address */
 #define NEXT_LINK(bp)  ((char *)(bp))
 #define PREV_LINK(bp)  ((char *)(bp) + WORD)
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+/* Given block ptr bp, compute address of next and previous block in the free list */
+#define NEXT_OF(bp)    (GET(NEXT_LINK(bp)))
+#define PREV_OF(bp)    (GET(PREV_LINK(bp)))
 
 static char *heapBegin;
+static char *heapEnd;
 static char *freeBegin;
 
 static void *extendHeap(size_t words);
@@ -128,7 +133,7 @@ static void *find_fit(size_t asize);
 static void *coalesce(void *bp);
 static void printblock(void *bp); 
 static void checkblock(void *bp);
-static void removeAdj(void *wp);
+static void removeFree(void *wp);
 static void insertFront(void *bp);
 void mm_checkheap(int verbose);
 
@@ -141,29 +146,22 @@ int mm_init(void)
     if ((heapBegin = mem_sbrk(4 * (WORD))) == NULL) {
         return -1;
     }
-    PUT(heapBegin, 0);                               // Búa til padding
-    PUT(heapBegin + WORD, PACK(ALLIGNMENT, 1));              // Búa til prologue header
-    PUT(heapBegin + ALLIGNMENT, PACK(ALLIGNMENT, 1));        // Búa til prologue footer
-    PUT(heapBegin + ALLIGNMENT + WORD, PACK(0, 1));  // Búa til epilogue header
-    heapBegin += ALLIGNMENT;                         // látum heapBegin benda framhjá padding
-
+    PUT(heapBegin, 0);                               // Create padding
+    PUT(heapBegin + WORD, PACK(ALIGNMENT, 1));       // Create prologue header
+    PUT(heapBegin + ALIGNMENT, PACK(ALIGNMENT, 1));  // Create prologue footer
+    PUT(heapBegin + ALIGNMENT + WORD, PACK(0, 1));   // Create epilogue header
+    heapBegin += ALIGNMENT;
+    heapEnd = heapBegin;
     freeBegin = NULL;
-    // búum til pláss fyrir blokkir
-    if (extendHeap(CHUNKSIZE/WORD) == NULL) {
-        // printf("extendHeap skilaði NULL\n");
-        return -1;
-    }
 
     return 0;
 }
-
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
  */
 void *mm_malloc(size_t size)
 {
-    // printf("About to allocate a block of size %d\n", size);
     size_t asize;      /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
     char *bp;      
@@ -173,47 +171,43 @@ void *mm_malloc(size_t size)
         return NULL;
 
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= ALLIGNMENT)
-        asize = ALLIGNMENT + HF_OVERHEAD;
+    if (size <= ALIGNMENT)
+        asize = ALIGNMENT + HF_OVERHEAD;
     else
-        asize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
-    // printf("asize = %d\n", asize);
+        asize = ALIGNMENT * ((size + (HF_OVERHEAD) + (ALIGNMENT-1)) / ALIGNMENT);
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
-        // printf("er að fara að kalla á place með bp = %p og asize = %d", bp, asize);
         place(bp, asize);
-        // printf("var að klára place með bp = %p og asize = %d\n", bp, asize);
-        //mm_checkheap(verbose);
         return bp;
     }
-
     /* No fit found. Get more memory and place the block */
-    // printf("Going to extend\n");
-    extendsize = MAX(asize,CHUNKSIZE);
+    if (!GET_ALLOC(heapEnd))
+    {
+        // last block is free, so extend heap just enough to be able to insert the new block
+        extendsize = asize - GET_SIZE(heapEnd);
+    } else
+        extendsize = asize;
+
     if ((bp = extendHeap(extendsize/WORD)) == NULL)
         return NULL;
+
     place(bp, asize);
-    //mm_checkheap(verbose);
     return bp;
 }
-
 /*
  * mm_free - Freeing a block does everything.
  */
 void mm_free(void *ptr)
 {
-    // printf("Kemst í free");
     size_t size = GET_SIZE(HDRP(ptr));
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
-    //mm_checkheap(verbose);
     // Jess ég er frír!
 }
-
 /*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * mm_realloc - Reallocates the block to it's new size and returns a pointer to the block.
  */
 void *mm_realloc(void *ptr, size_t size)
 {
@@ -233,10 +227,10 @@ void *mm_realloc(void *ptr, size_t size)
     size_t newSize;
 
     // ReAllocate the block pointed to by ptr (change the block size)
-    if (size <= ALLIGNMENT) /*adjusting the size*/
-        newSize = ALLIGNMENT + HF_OVERHEAD;
+    if (size <= ALIGNMENT) /*adjusting the size*/
+        newSize = ALIGNMENT + HF_OVERHEAD;
     else
-        newSize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
+        newSize = ALIGNMENT * ((size + (HF_OVERHEAD) + (ALIGNMENT-1)) / ALIGNMENT);
 
     if (newSize == oldSize) return ptr;
     if (newSize > oldSize) { 
@@ -245,14 +239,14 @@ void *mm_realloc(void *ptr, size_t size)
 
         if ((GET_SIZE(HDRP(nextp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(nextp))) {
             // merging ptr block and the next one is big enough.
-            removeAdj(nextp);
+            removeFree(nextp);
             PUT(HDRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             PUT(FTRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             place(ptr, newSize);
             return ptr;
         } else if ((GET_SIZE(HDRP(prevp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(prevp))) {
             // merging ptr block and the prev one is big enough.
-            removeAdj(prevp);
+            removeFree(prevp);
             PUT(HDRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
             memcpy(prevp, ptr, oldSize);
@@ -260,8 +254,8 @@ void *mm_realloc(void *ptr, size_t size)
             return prevp;
         } else if (((GET_SIZE(HDRP(prevp)) + GET_SIZE(HDRP(nextp)) + oldSize) >= newSize) && !GET_ALLOC(HDRP(prevp)) && !GET_ALLOC(HDRP(nextp))) {
             // merging ptr block and both next and prev is big enough.
-            removeAdj(prevp);
-            removeAdj(nextp);
+            removeFree(prevp);
+            removeFree(nextp);
             PUT(HDRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
             memcpy(prevp, ptr, oldSize);
@@ -297,11 +291,12 @@ static void *extendHeap(size_t words) {
         return NULL;
 
     /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 2));               // free block header and set it as last
-    PUT(FTRP(bp), PACK(size, 2));               // free block footer and set it as last
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       // new epilogue header
     PUT(NEXT_LINK(bp), 0);                      // nextlink points to NULL
     PUT(PREV_LINK(bp), 0);                      // prevlink points to NULL
+    PUT(HDRP(bp), PACK(size, 0));               // free block header
+    PUT(FTRP(bp), PACK(size, 0));               // free block footer
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       // new epilogue header
+    heapEnd = FTRP(bp);                         // put heapEnd to where it's supposed to be
 
     /* Coalesce if the previous block was free */
     return coalesce(bp);
@@ -316,21 +311,21 @@ static void *coalesce(void *bp) {
     if (prev_alloc && !next_alloc) {      /* Case 2 */
         wp = NEXT_BLKP(bp);
         size += GET_SIZE(HDRP(wp));
-        removeAdj(wp);
+        removeFree(wp);
     }
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
      	wp = PREV_BLKP(bp);
         size += GET_SIZE(HDRP(wp));
-        removeAdj(wp);
+        removeFree(wp);
         bp = wp;
     }
     else if (!prev_alloc && !next_alloc) {      /* Case 4 */
         wp = NEXT_BLKP(bp);
         size += GET_SIZE(HDRP(wp));
-        removeAdj(wp);
+        removeFree(wp);
         wp = PREV_BLKP(bp);
         size += GET_SIZE(HDRP(wp));
-        removeAdj(wp);
+        removeFree(wp);
     	bp = wp;
     }
     PUT(HDRP(bp), PACK(size, 0));
@@ -340,37 +335,7 @@ static void *coalesce(void *bp) {
 
     return bp;
 }
-
-// amazing
-// static void *coalesce2() {
-//     for (void *bp = freeBegin; GET(NEXT_LINK(bp)) != 0; bp = NEXT_OF(bp)) {
-        
-//     }
-
-//     return NULL;
-// }
-
-// static void *findEdges(void *curr, size_t direction) {
-//     if (!GET_ALLOC(HDRP(curr)))
-//     {
-//         if (GET(NEXT_LINK(curr)))
-//         {
-//             if (direction)
-//                 return findEdges(NEXT_OF(curr), direction);
-//             else
-//                 return findEdges(PREV_OF(curr), direction);
-//         } else {
-//             return curr;
-//         }
-//     }
-//     else {
-//         if (direction)
-//             return PREV_BLKP(curr);
-//         else
-//             return NEXT_BLKP(curr);
-//     }
-// }
-
+// Inserts the free block at the front of the freelist.
 static void insertFront(void *bp) {
     if (freeBegin != NULL) {
     	PUT(bp, (size_t)freeBegin);
@@ -381,18 +346,18 @@ static void insertFront(void *bp) {
     PUT(PREV_LINK(bp), 0);
     freeBegin = bp;
 }
-
-static void removeAdj(void *wp) {
-    if (GET(NEXT_LINK(wp)) == 0 && GET(PREV_LINK(wp)) == 0) {
+// Removes the block from the freelist.
+static void removeFree(void *wp) {
+    if (NEXT_OF(wp) == 0 && PREV_OF(wp) == 0) {
     	freeBegin = NULL;
-    } else if (GET(NEXT_LINK(wp)) == 0) {
-    	PUT(NEXT_LINK((size_t*)GET(PREV_LINK(wp))), 0);
-    } else if (GET(PREV_LINK(wp)) == 0)  {
+    } else if (NEXT_OF(wp) == 0) {
+    	PUT(NEXT_LINK((size_t*)PREV_OF(wp)), 0);
+    } else if (PREV_OF(wp) == 0)  {
     	freeBegin = (void*)GET(wp);
     	PUT(PREV_LINK(freeBegin), 0);
     } else {
-    	PUT(NEXT_LINK((size_t*)GET(PREV_LINK(wp))), (size_t)GET(NEXT_LINK(wp)));
-    	PUT(PREV_LINK((size_t*)GET(NEXT_LINK(wp))), (size_t)GET(PREV_LINK(wp)));
+    	PUT(NEXT_LINK((size_t*)PREV_OF(wp)), NEXT_OF(wp));
+    	PUT(PREV_LINK((size_t*)NEXT_OF(wp)), PREV_OF(wp));
     }
 }
 // Find a fit for a block with asize bytes 
@@ -403,16 +368,15 @@ static void *find_fit(size_t asize) {
     if (bp != NULL) {
         size_t running = 1;
         while (running) {
-		if (GET(NEXT_LINK(bp)) == 0) {
+		if (NEXT_OF(bp) == 0) {
                 running = 0;
             }
             if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
-            bp = (char*)GET(NEXT_LINK(bp));
+            bp = (char*)NEXT_OF(bp);
         } 
     }
-    // todo: make this best fit.
     return NULL; /* no fit */
 }
 // Place block of asize bytes at start of free block bp 
@@ -421,7 +385,7 @@ static void place(void *bp, size_t asize) {
     size_t csize = GET_SIZE(HDRP(bp));
     // remove bp from the freelist
     if (!GET_ALLOC(HDRP(bp)))
-        removeAdj(bp);
+        removeFree(bp);
 
     if ((csize - asize) >= (OVERHEAD)) { 
         // splitting them
@@ -448,7 +412,7 @@ void mm_checkheap(int verbose)
     if (verbose)
         printf("Heap (%p):\n", heapBegin);
 
-    if ((GET_SIZE(HDRP(heapBegin)) != ALLIGNMENT) || !GET_ALLOC(HDRP(heapBegin)))
+    if ((GET_SIZE(HDRP(heapBegin)) != ALIGNMENT) || !GET_ALLOC(HDRP(heapBegin)))
         printf("Bad prologue header\n");
     checkblock(heapBegin);
 
@@ -464,34 +428,34 @@ void mm_checkheap(int verbose)
         printf("Bad epilogue header\n");
 
     // print freelist
-    bp = freeBegin;
-    if (verbose) {
-        printf("Free (%p):\n", freeBegin);
-        for (bp = freeBegin; GET(NEXT_LINK(bp)) != 0; bp = (char*)GET(NEXT_LINK(bp))) {
+    if (freeBegin != NULL) {
+        bp = freeBegin;
+        if (verbose) {
+            printf("Free (%p):\n", freeBegin);
+            for (bp = freeBegin; NEXT_OF(bp) != 0; bp = (char*)NEXT_OF(bp)) {
+                printblock(bp);
+            }
             printblock(bp);
         }
-        printblock(bp);
     }
 }
 static void printblock(void *bp) 
 {
-    size_t hsize, halloc, hlast, fsize, falloc, flast;
+    size_t hsize, halloc, fsize, falloc;
 
     hsize = GET_SIZE(HDRP(bp));
-    halloc = GET_ALLOC(HDRP(bp));  
-    hlast = GET_LAST(HDRP(bp));
+    halloc = GET_ALLOC(HDRP(bp));
     fsize = GET_SIZE(FTRP(bp));
-    falloc = GET_ALLOC(FTRP(bp)); 
-    flast = GET_LAST(HDRP(bp)); 
+    falloc = GET_ALLOC(FTRP(bp));
     
     if (hsize == 0) {
         printf("%p: EOL\n", bp);
         return;
     }
 
-    printf("%p: header: [%d:%c:%c] footer: [%d:%c:%c]\n", bp, 
-           hsize, (halloc ? 'a' : 'f'), (hlast ? 'l' : 'n'),
-           fsize, (falloc ? 'a' : 'f'), (flast ? 'l' : 'n')); 
+    printf("%p: header: [%d:%c] footer: [%d:%c]\n", bp, 
+           hsize, (halloc ? 'a' : 'f'),
+           fsize, (falloc ? 'a' : 'f')); 
 }
 static void checkblock(void *bp) 
 {
@@ -500,13 +464,3 @@ static void checkblock(void *bp)
     if (GET(HDRP(bp)) != GET(FTRP(bp)))
         printf("Error: header does not match footer\n");
 }
-
-
-
-
-
-
-
-
-
-
