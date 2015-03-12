@@ -239,29 +239,52 @@ void *mm_realloc(void *ptr, size_t size)
         newSize = ALLIGNMENT * ((size + (HF_OVERHEAD) + (ALLIGNMENT-1)) / ALLIGNMENT);
 
     if (newSize == oldSize) return ptr;
-    if (newSize > oldSize) { /*simply allocate a block of newSize and free the old one*/
+    if (newSize > oldSize) { 
         
-        // copy data
-        size_t tmp1 = GET(NEXT_LINK(ptr));
-        size_t tmp2 = GET(PREV_LINK(ptr));
+        void *prevp = PREV_BLKP(ptr), *nextp = NEXT_BLKP(ptr);
 
-        mm_free(ptr);
-        void *nptr = mm_malloc(size);
-
-        if (nptr == NULL) {
-            printf("ERROR: mm_malloc failed in mm_realloc\n");
-            exit(1);
+        if ((GET_SIZE(HDRP(nextp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(nextp))) {
+            // merging ptr block and the next one is big enough.
+            removeAdj(nextp);
+            PUT(HDRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
+            PUT(FTRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
+            place(ptr, newSize);
+            return ptr;
+        } else if ((GET_SIZE(HDRP(prevp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(prevp))) {
+            // merging ptr block and the prev one is big enough.
+            removeAdj(prevp);
+            PUT(HDRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
+            PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
+            memcpy(prevp, ptr, oldSize);
+            place(prevp, newSize);
+            return prevp;
+        } else if (((GET_SIZE(HDRP(prevp)) + GET_SIZE(HDRP(nextp)) + oldSize) >= newSize) && !GET_ALLOC(HDRP(prevp)) && !GET_ALLOC(HDRP(nextp))) {
+            // merging ptr block and both next and prev is big enough.
+            removeAdj(prevp);
+            removeAdj(nextp);
+            PUT(HDRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
+            PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
+            memcpy(prevp, ptr, oldSize);
+            place(prevp, newSize);
+            return prevp;
         } else {
-            memcpy(nptr, ptr, oldSize);
-            PUT(NEXT_LINK(nptr), tmp1);
-            PUT(PREV_LINK(nptr), tmp2);
-            return nptr;
+            // we will need to create a new block on the heap and free the old one
+            void *nptr;
+            if ((nptr = mm_malloc(size)) == NULL) {
+                printf("ERROR: mm_malloc failed in mm_realloc\n");
+                exit(1);
+            } else {
+                memcpy(nptr, ptr, oldSize);
+                mm_free(ptr);
+                return nptr;
+            }
         }
+
     } else {
         place(ptr, newSize);
     }
 
-    return NULL;
+    return ptr;
 }
 // Extend heap with free block and return its block pointer
 static void *extendHeap(size_t words) {
