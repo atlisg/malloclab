@@ -437,6 +437,16 @@ void mm_checkheap(int verbose)
     for (bp = heapBegin; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         if (verbose) 
             printblock(bp);
+        if (!GET_ALLOC(HDRP(bp)) && !GET_ALLOC(HDRP(NEXT_BLKP(bp)))) {
+            printf("Error: Heap contains contiguous free blocks that somehow escaped coalescing!\n");
+            exit(1);
+        }
+        if (!GET_ALLOC(HDRP(bp))) {
+            if (!contains(bp)) {
+                printf("Error: There exists a free block which is NOT in the freelist!\n");
+                exit(1);
+            }
+        }
         checkblock(bp);
     }
      
@@ -450,15 +460,31 @@ void mm_checkheap(int verbose)
         bp = freeBegin;
         if (verbose) {
             printf("Free (%p):\n", freeBegin);
-            for (bp = freeBegin; NEXT_OF(bp) != 0; bp = (char*)NEXT_OF(bp)) {
-                printblock(bp);
+            size_t running = 1;
+            while (running) {
+                if (NEXT_OF(bp) == 0) 
+                    running = 0;
+                /* Is every block in the free list marked as free? */
+                if (GET_ALLOC(HDRP(bp))) {
+                    printf("Error: Allocated block in freelist!\n");
+                    exit(1);
+                }
+                if (!contains((void*)NEXT_OF(bp)) || !contains((void*)PREV_OF(bp))) {
+                    printf("Error: A link in a free block does not point to a valid free block!");
+                    exit(1);
+                }
+                if (verbose)
+                    printblock(bp);
+                bp = (void*)NEXT_OF(bp);
             }
             printblock(bp);
         }
     }
+
+    
 }
 /*
- * Print a block
+ * Print block
  */
 static void printblock(void *bp) 
 {
@@ -485,8 +511,11 @@ static void checkblock(void *bp)
 {
     if ((size_t)bp % 8)
         printf("Error: %p is not doubleword aligned\n", bp);
+        exit(1);
     if (GET(HDRP(bp)) != GET(FTRP(bp)))
         printf("Error: header does not match footer\n");
+        exit(1);
 }
 
-// INSERT --
+/*
+-- INSERT --                                     */
