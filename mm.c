@@ -132,6 +132,7 @@ static void checkblock(void *bp);
 static void removeFree(void *wp);
 static void insertFront(void *bp);
 void mm_checkheap(int verbose);
+size_t contains(void *bp);
 
 
 /* 
@@ -279,7 +280,8 @@ void *mm_realloc(void *ptr, size_t size)
 /*
  * Extend heap with free block and return its block pointer
  */ 
-static void *extendHeap(size_t words) {
+static void *extendHeap(size_t words) 
+{
     char *bp;
     size_t size;
 
@@ -302,7 +304,8 @@ static void *extendHeap(size_t words) {
 /*
  * Boundary tag coalescing. Return ptr to coalesced block
  */ 
-static void *coalesce(void *bp) {
+static void *coalesce(void *bp) 
+{
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
@@ -338,7 +341,8 @@ static void *coalesce(void *bp) {
 /*
  * Inserts the free block at the front of the freelist.
  */ 
-static void insertFront(void *bp) {
+static void insertFront(void *bp) 
+{
     if (freeBegin != NULL) {
     	PUT(bp, (size_t)freeBegin);
 	PUT(PREV_LINK(freeBegin), (size_t)bp);
@@ -351,7 +355,8 @@ static void insertFront(void *bp) {
 /*
  * Removes the block from the freelist.
  */
-static void removeFree(void *wp) {
+static void removeFree(void *wp) 
+{
     if (NEXT_OF(wp) == 0 && PREV_OF(wp) == 0) {
     	freeBegin = NULL;
     } else if (NEXT_OF(wp) == 0) {
@@ -367,7 +372,8 @@ static void removeFree(void *wp) {
 /*
  * Find best fit for a block with asize bytes 
  */
-static void *find_fit(size_t asize) {
+static void *find_fit(size_t asize) 
+{
     /* best fit search */
     char *bp = freeBegin;
     void *bestBlock = NULL;
@@ -397,7 +403,8 @@ static void *find_fit(size_t asize) {
  * Place block of asize bytes at start of free block bp 
  * and split if remainder would be at least minimum block size
  */
-static void place(void *bp, size_t asize) {
+static void place(void *bp, size_t asize) 
+{
     size_t csize = GET_SIZE(HDRP(bp));
     /* remove bp from the freelist */
     if (!GET_ALLOC(HDRP(bp)))
@@ -489,4 +496,23 @@ static void checkblock(void *bp)
         printf("Error: header does not match footer\n");
 }
 
-// INSERT --
+/*
+ * Check if free block bp is in the freelist
+ */
+size_t contains(void *bp)
+{
+    void *curr = freeBegin;
+    if (curr != NULL)
+    {
+        size_t running = 1;
+        while (running) {
+            if (NEXT_OF(curr) == 0)
+                running = 0;
+            if (curr == bp)
+                return 1;
+
+            curr = (void*)NEXT_OF(curr);
+        }
+    }
+    return 0;
+}
