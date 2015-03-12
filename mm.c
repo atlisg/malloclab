@@ -190,6 +190,9 @@ void *mm_malloc(size_t size)
         return NULL;
 
     place(bp, asize);
+
+    mm_checkheap(verbose);
+
     return bp;
 }
 /*
@@ -201,6 +204,9 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
+
+    mm_checkheap(verbose);
+
     /* Jess ég er frír! */
 }
 /*
@@ -240,6 +246,7 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(HDRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             PUT(FTRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             place(ptr, newSize);
+            mm_checkheap(verbose);
             return ptr;
         } else if ((GET_SIZE(HDRP(prevp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(prevp))) {
             /* merging ptr block and the prev one is big enough. */
@@ -248,6 +255,7 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
             memcpy(prevp, ptr, oldSize);
             place(prevp, newSize);
+            mm_checkheap(verbose);
             return prevp;
         } else if (((GET_SIZE(HDRP(prevp)) + GET_SIZE(HDRP(nextp)) + oldSize) >= newSize) && !GET_ALLOC(HDRP(prevp)) && !GET_ALLOC(HDRP(nextp))) {
             /* merging ptr block and both next and prev is big enough. */
@@ -257,6 +265,7 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
             memcpy(prevp, ptr, oldSize);
             place(prevp, newSize);
+            mm_checkheap(verbose);
             return prevp;
         } else {
             /* we will need to create a new block on the heap and free the old one */
@@ -267,6 +276,7 @@ void *mm_realloc(void *ptr, size_t size)
             } else {
                 memcpy(nptr, ptr, oldSize);
                 mm_free(ptr);
+                mm_checkheap(verbose);
                 return nptr;
             }
         }
@@ -274,7 +284,7 @@ void *mm_realloc(void *ptr, size_t size)
     } else {
         place(ptr, newSize);
     }
-
+    mm_checkheap(verbose);
     return ptr;
 }
 /*
@@ -476,7 +486,7 @@ void mm_checkheap(int verbose)
                     printf("Error: Allocated block in freelist!\n");
                     exit(1);
                 }
-                if (!contains((void*)NEXT_OF(bp)) || !contains((void*)PREV_OF(bp))) {
+                if ((NEXT_OF(bp) != 0 && !contains((void*)NEXT_OF(bp))) || (PREV_OF(bp) != 0 && !contains((void*)PREV_OF(bp)))) {
                     printf("Error: A link in a free block does not point to a valid free block!");
                     exit(1);
                 }
@@ -484,7 +494,6 @@ void mm_checkheap(int verbose)
                     printblock(bp);
                 bp = (void*)NEXT_OF(bp);
             }
-            printblock(bp);
         }
     }
 
@@ -516,12 +525,14 @@ static void printblock(void *bp)
  */
 static void checkblock(void *bp) 
 {
-    if ((size_t)bp % 8)
+    if ((size_t)bp % 8) {
         printf("Error: %p is not doubleword aligned\n", bp);
         exit(1);
-    if (GET(HDRP(bp)) != GET(FTRP(bp)))
+    }
+    if (GET(HDRP(bp)) != GET(FTRP(bp))) {
         printf("Error: header does not match footer\n");
         exit(1);
+    }
 }
 
 /*
