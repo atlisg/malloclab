@@ -192,8 +192,6 @@ void *mm_malloc(size_t size)
 
     place(bp, asize);
 
-    //mm_checkheap(verbose);
-
     return bp;
 }
 /*
@@ -205,9 +203,6 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
-
-    mm_checkheap(verbose);
-
     /* Jess ég er frír! */
 }
 /*
@@ -247,7 +242,6 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(HDRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             PUT(FTRP(ptr), PACK((GET_SIZE(HDRP(nextp)) + oldSize), 1));
             place(ptr, newSize);
-            //mm_checkheap(verbose);
             return ptr;
         } else if ((GET_SIZE(HDRP(prevp)) + oldSize >= newSize) && !GET_ALLOC(HDRP(prevp))) {
             /* merging ptr block and the prev one is big enough. */
@@ -256,7 +250,6 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize), 1));
             memcpy(prevp, ptr, oldSize);
             place(prevp, newSize);
-            //mm_checkheap(verbose);
             return prevp;
         } else if (((GET_SIZE(HDRP(prevp)) + GET_SIZE(HDRP(nextp)) + oldSize) >= newSize) && !GET_ALLOC(HDRP(prevp)) && !GET_ALLOC(HDRP(nextp))) {
             /* merging ptr block and both next and prev is big enough. */
@@ -266,7 +259,6 @@ void *mm_realloc(void *ptr, size_t size)
             PUT(FTRP(prevp), PACK((GET_SIZE(HDRP(prevp)) + oldSize + GET_SIZE(HDRP(nextp))), 1));
             memcpy(prevp, ptr, oldSize);
             place(prevp, newSize);
-            //mm_checkheap(verbose);
             return prevp;
         } else {
             /* we will need to create a new block on the heap and free the old one */
@@ -277,7 +269,6 @@ void *mm_realloc(void *ptr, size_t size)
             } else {
                 memcpy(nptr, ptr, oldSize);
                 mm_free(ptr);
-                //mm_checkheap(verbose);
                 return nptr;
             }
         }
@@ -285,7 +276,6 @@ void *mm_realloc(void *ptr, size_t size)
     } else {
         place(ptr, newSize);
     }
-    //mm_checkheap(verbose);
     return ptr;
 }
 /*
