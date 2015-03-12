@@ -44,7 +44,7 @@
  * Free: When we are asked to free a block we set the block's header and footer
  * allocated bit to 0 and check if it can coalesce.
  *
- * Allocate: We find the first free block of sufficient size with linear search.
+ * Allocate: We find the best fitting free block of sufficient size with linear search.
  * If there is no match, we extend the heap just enough so we can fit it.
  *
  * ReAllocate: If we are decreasing the block's size we simply split the block into two iff
